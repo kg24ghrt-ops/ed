@@ -1,0 +1,18 @@
+{
+  "plugin": "org.smartide.plugin.editor",
+  "run": "echo 'change command from .si.json file'",
+  "intelligence": {
+    ".rs": {
+      "enabled": true,
+      "run": "rust-analyzer"
+    },
+    ".toml": {
+      "enabled": true,
+      "run": "taplo lsp stdio"
+    },
+    ".yml": {
+      "enabled": true,
+      "run": "yaml-language-server --stdio"
+    }
+  }
+}

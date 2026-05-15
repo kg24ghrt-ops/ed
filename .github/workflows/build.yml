@@ -1,0 +1,88 @@
+name: Build Universal macOS DMG
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest  # Apple Silicon, fast builds
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (Apple Silicon + Intel targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build for Apple Silicon (native)
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Build for Intel
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Create universal binary
+        run: |
+          mkdir -p target/universal
+          lipo -create \
+            target/aarch64-apple-darwin/release/novacibes-editor \
+            target/x86_64-apple-darwin/release/novacibes-editor \
+            -output target/universal/novacibes-editor
+
+      - name: Prepare .app bundle structure
+        run: |
+          APP_DIR="target/NovaCibes Editor.app/Contents/MacOS"
+          mkdir -p "$APP_DIR"
+          cp target/universal/novacibes-editor "$APP_DIR/"
+          # Add an Info.plist (minimal)
+          mkdir -p "target/NovaCibes Editor.app/Contents"
+          cat > "target/NovaCibes Editor.app/Contents/Info.plist" << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>novacibes-editor</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.novacibes.editor</string>
+              <key>CFBundleName</key>
+              <string>NovaCibes Editor</string>
+              <key>CFBundleVersion</key>
+              <string>0.1.0</string>
+              <key>CFBundleShortVersionString</key>
+              <string>0.1.0</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>11.0</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Create DMG
+        run: |
+          hdiutil create -volname "NovaCibes Editor" \
+            -srcfolder "target/NovaCibes Editor.app" \
+            -ov -format UDZO \
+            "NovaCibesEditor.dmg"
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: NovaCibesEditor.dmg
+          path: NovaCibesEditor.dmg
