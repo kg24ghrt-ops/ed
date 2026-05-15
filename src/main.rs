@@ -6,7 +6,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-static RT: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
+static RT: Lazy<<tokio::runtime::Runtime> = Lazy::new(|| {
     tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime")
 });
 
@@ -42,7 +42,7 @@ impl EditorTab {
 }
 
 struct NovaCibesEditor {
-    open_files: Vec<EditorTab>,
+    open_files: Vec<<EditorTab>,
     active_tab: usize,
     output_text: String,
     status_message: String,
@@ -93,7 +93,7 @@ impl NovaCibesEditor {
         }
     }
 
-    fn run_code(&mut self) {
+    fn run_code(&mut self, ctx: &egui::Context) {
         if self.api_token.is_none() {
             self.output_text = "Error: No API token. Enter it in the prompt.\n".into();
             return;
@@ -118,6 +118,7 @@ impl NovaCibesEditor {
         let (tx, rx) = mpsc::unbounded_channel();
         self.rx = Some(rx);
 
+        let ctx_clone = ctx.clone();
         RT.spawn(async move {
             let client = reqwest::Client::new();
             let mut results = Vec::new();
@@ -151,6 +152,7 @@ impl NovaCibesEditor {
                 } else { results.push(block); }
             }
             let _ = tx.send(results.join("\n"));
+            ctx_clone.request_repaint();
         });
     }
 
@@ -201,15 +203,15 @@ impl NovaCibesEditor {
 }
 
 impl eframe::App for NovaCibesEditor {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.set_visuals(egui::Visuals::dark());
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        ui.ctx().set_visuals(egui::Visuals::dark());
 
         // --- API token prompt ---
         if self.token_prompt_open {
             egui::Window::new("Enter Hugging Face API Token")
                 .collapsible(false).resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
+                .show(ui.ctx(), |ui| {
                     ui.label("Paste your personal access token:");
                     ui.text_edit_singleline(&mut self.temp_token);
                     if ui.button("OK").clicked() && !self.temp_token.trim().is_empty() {
@@ -222,15 +224,15 @@ impl eframe::App for NovaCibesEditor {
         }
 
         // --- Menu bar ---
-        egui::Panel::top("menu_bar").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
+        egui::Panel::top("menu_bar").show_inside(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("New Tab").clicked() {
                         self.open_files.push(EditorTab::new_empty());
                         self.active_tab = self.open_files.len() - 1;
                         ui.close();
                     }
-                    if ui.button("Open…").clicked() {
+                    if ui.button("Open\u{2026}").clicked() {
                         if let Some(path) = rfd::FileDialog::new().add_filter("Python", &["py"]).pick_file() {
                             if let Ok(code) = std::fs::read_to_string(&path) {
                                 let cur = &self.open_files[self.active_tab];
@@ -246,14 +248,14 @@ impl eframe::App for NovaCibesEditor {
                         ui.close();
                     }
                     if ui.button("Save").clicked() { self.save_active(); ui.close(); }
-                    if ui.button("Save As…").clicked() { self.save_active_as(); ui.close(); }
+                    if ui.button("Save As\u{2026}").clicked() { self.save_active_as(); ui.close(); }
                     if ui.button("Close Tab").clicked() { self.close_active_tab(); ui.close(); }
                 });
             });
         });
 
         // --- Tab bar ---
-        egui::Panel::top("tab_bar").show(ctx, |ui| {
+        egui::Panel::top("tab_bar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 let mut close_idx = None;
                 for (i, tab) in self.open_files.iter().enumerate() {
@@ -280,7 +282,7 @@ impl eframe::App for NovaCibesEditor {
         });
 
         // --- Output panel (right side) ---
-        egui::Panel::right("output_panel").resizable(true).default_size([300.0, 0.0]).show(ctx, |ui| {
+        egui::Panel::right("output_panel").resizable(true).default_size(300.0).show_inside(ui, |ui| {
             ui.heading("Output");
             ui.separator();
             egui::ScrollArea::vertical().auto_shrink([false;2]).show(ui, |ui| {
@@ -293,7 +295,7 @@ impl eframe::App for NovaCibesEditor {
         });
 
         // --- Central editor area ---
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             if self.active_tab < self.open_files.len() {
                 let tab = &mut self.open_files[self.active_tab];
                 let mut editor = egui_code_editor::CodeEditor::default()
@@ -302,17 +304,17 @@ impl eframe::App for NovaCibesEditor {
                     .with_rows(25)
                     .with_fontsize(14.0)
                     .with_id_source(format!("tab_{}", self.active_tab));
-                // The show method now takes (&mut Ui, &mut String)
                 editor.show(ui, &mut tab.code);
             }
         });
 
         // --- Bottom bar (Run button + status) ---
-        egui::Panel::bottom("bottom_bar").show(ctx, |ui| {
+        egui::Panel::bottom("bottom_bar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 let can_run = !self.running && self.api_token.is_some();
-                if ui.add_enabled(can_run, egui::Button::new("▶ Run")).clicked() {
-                    self.run_code();
+                let ctx = ui.ctx().clone();
+                if ui.add_enabled(can_run, egui::Button::new("\u{25b6} Run")).clicked() {
+                    self.run_code(&ctx);
                 }
                 ui.checkbox(&mut self.run_all_tabs, "Run all open files");
                 if self.running { ui.add(egui::Spinner::new()); }
@@ -329,7 +331,7 @@ impl eframe::App for NovaCibesEditor {
                 self.rx = None;
             }
         }
-        if self.running { ctx.request_repaint(); }
+        if self.running { ui.ctx().request_repaint(); }
     }
 }
 
