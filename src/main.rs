@@ -6,7 +6,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-static RT: Lazy<<tokio::runtime::Runtime> = Lazy::new(|| {
+static RT: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
     tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime")
 });
 
@@ -42,7 +42,7 @@ impl EditorTab {
 }
 
 struct NovaCibesEditor {
-    open_files: Vec<<EditorTab>,
+    open_files: Vec<EditorTab>,
     active_tab: usize,
     output_text: String,
     status_message: String,
@@ -232,7 +232,7 @@ impl eframe::App for NovaCibesEditor {
                         self.active_tab = self.open_files.len() - 1;
                         ui.close();
                     }
-                    if ui.button("Open\u{2026}").clicked() {
+                    if ui.button("Open\u2026").clicked() {
                         if let Some(path) = rfd::FileDialog::new().add_filter("Python", &["py"]).pick_file() {
                             if let Ok(code) = std::fs::read_to_string(&path) {
                                 let cur = &self.open_files[self.active_tab];
@@ -248,7 +248,7 @@ impl eframe::App for NovaCibesEditor {
                         ui.close();
                     }
                     if ui.button("Save").clicked() { self.save_active(); ui.close(); }
-                    if ui.button("Save As\u{2026}").clicked() { self.save_active_as(); ui.close(); }
+                    if ui.button("Save As\u2026").clicked() { self.save_active_as(); ui.close(); }
                     if ui.button("Close Tab").clicked() { self.close_active_tab(); ui.close(); }
                 });
             });
@@ -313,7 +313,7 @@ impl eframe::App for NovaCibesEditor {
             ui.horizontal(|ui| {
                 let can_run = !self.running && self.api_token.is_some();
                 let ctx = ui.ctx().clone();
-                if ui.add_enabled(can_run, egui::Button::new("\u{25b6} Run")).clicked() {
+                if ui.add_enabled(can_run, egui::Button::new("\u25b6 Run")).clicked() {
                     self.run_code(&ctx);
                 }
                 ui.checkbox(&mut self.run_all_tabs, "Run all open files");
