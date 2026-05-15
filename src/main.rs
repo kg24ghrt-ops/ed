@@ -204,7 +204,7 @@ impl eframe::App for NovaCibesEditor {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_visuals(egui::Visuals::dark());
 
-        // --- API token prompt -----------------------------------------------
+        // --- API token prompt ---
         if self.token_prompt_open {
             egui::Window::new("Enter Hugging Face API Token")
                 .collapsible(false).resizable(false)
@@ -221,9 +221,9 @@ impl eframe::App for NovaCibesEditor {
                 });
         }
 
-        // --- Menu bar --------------------------------------------------------
-        egui::Panel::top("menu_bar").show_inside(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {       // bar function still exists
+        // --- Menu bar ---
+        egui::Panel::top("menu_bar").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("New Tab").clicked() {
                         self.open_files.push(EditorTab::new_empty());
@@ -252,8 +252,8 @@ impl eframe::App for NovaCibesEditor {
             });
         });
 
-        // --- Tab bar ---------------------------------------------------------
-        egui::Panel::top("tab_bar").show_inside(ctx, |ui| {
+        // --- Tab bar ---
+        egui::Panel::top("tab_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let mut close_idx = None;
                 for (i, tab) in self.open_files.iter().enumerate() {
@@ -266,7 +266,6 @@ impl eframe::App for NovaCibesEditor {
                     self.active_tab = self.open_files.len() - 1;
                 }
                 if let Some(i) = close_idx {
-                    // The user clicked the close button on tab i
                     if self.open_files.len() <= 1 {
                         self.open_files = vec![EditorTab::new_empty()];
                         self.active_tab = 0;
@@ -280,8 +279,8 @@ impl eframe::App for NovaCibesEditor {
             });
         });
 
-        // --- Output panel (right side) --------------------------------------
-        egui::Panel::right("output_panel").resizable(true).default_width(300.0).show_inside(ctx, |ui| {
+        // --- Output panel (right side) ---
+        egui::Panel::right("output_panel").resizable(true).default_size([300.0, 0.0]).show(ctx, |ui| {
             ui.heading("Output");
             ui.separator();
             egui::ScrollArea::vertical().auto_shrink([false;2]).show(ui, |ui| {
@@ -293,28 +292,23 @@ impl eframe::App for NovaCibesEditor {
             if ui.button("Clear Output").clicked() { self.output_text.clear(); }
         });
 
-        // --- Central editor area --------------------------------------------
-        egui::CentralPanel::default().show_inside(ctx, |ui| {
+        // --- Central editor area ---
+        egui::CentralPanel::default().show(ctx, |ui| {
             if self.active_tab < self.open_files.len() {
                 let tab = &mut self.open_files[self.active_tab];
                 let mut editor = egui_code_editor::CodeEditor::default()
-                    .with_language("python")
-                    .with_theme("monokai")
+                    .with_syntax(egui_code_editor::Syntax::python())
+                    .with_theme(egui_code_editor::ColorTheme::MONOKAI)
                     .with_rows(25)
                     .with_fontsize(14.0)
                     .with_id_source(format!("tab_{}", self.active_tab));
-                editor.set_text(&tab.code);
-                if let Some(new_text) = editor.show(ui).get_text() {
-                    if new_text != tab.code {
-                        tab.code = new_text.to_string();
-                        tab.modified = true;
-                    }
-                }
+                // The show method now takes (&mut Ui, &mut String)
+                editor.show(ui, &mut tab.code);
             }
         });
 
-        // --- Bottom bar (Run button + status) -------------------------------
-        egui::Panel::bottom("bottom_bar").show_inside(ctx, |ui| {
+        // --- Bottom bar (Run button + status) ---
+        egui::Panel::bottom("bottom_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let can_run = !self.running && self.api_token.is_some();
                 if ui.add_enabled(can_run, egui::Button::new("▶ Run")).clicked() {
@@ -326,7 +320,7 @@ impl eframe::App for NovaCibesEditor {
             });
         });
 
-        // --- Poll the background channel -----------------------------------
+        // --- Poll the background channel ---
         if let Some(rx) = &mut self.rx {
             if let Ok(result) = rx.try_recv() {
                 self.output_text = result;
