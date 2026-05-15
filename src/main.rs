@@ -165,7 +165,7 @@ impl NovaCibesEditor {
                 self.status_message = "Error saving".into();
             }
         } else {
-            drop(tab); // borrow split
+            drop(tab);
             self.save_active_as();
         }
     }
@@ -204,6 +204,7 @@ impl eframe::App for NovaCibesEditor {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_visuals(egui::Visuals::dark());
 
+        // --- API token prompt -----------------------------------------------
         if self.token_prompt_open {
             egui::Window::new("Enter Hugging Face API Token")
                 .collapsible(false).resizable(false)
@@ -220,13 +221,14 @@ impl eframe::App for NovaCibesEditor {
                 });
         }
 
-        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
+        // --- Menu bar --------------------------------------------------------
+        egui::Panel::top("menu_bar").show_inside(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {       // bar function still exists
                 ui.menu_button("File", |ui| {
                     if ui.button("New Tab").clicked() {
                         self.open_files.push(EditorTab::new_empty());
                         self.active_tab = self.open_files.len() - 1;
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Open…").clicked() {
                         if let Some(path) = rfd::FileDialog::new().add_filter("Python", &["py"]).pick_file() {
@@ -241,16 +243,17 @@ impl eframe::App for NovaCibesEditor {
                                 }
                             }
                         }
-                        ui.close_menu();
+                        ui.close();
                     }
-                    if ui.button("Save").clicked() { self.save_active(); ui.close_menu(); }
-                    if ui.button("Save As…").clicked() { self.save_active_as(); ui.close_menu(); }
-                    if ui.button("Close Tab").clicked() { self.close_active_tab(); ui.close_menu(); }
+                    if ui.button("Save").clicked() { self.save_active(); ui.close(); }
+                    if ui.button("Save As…").clicked() { self.save_active_as(); ui.close(); }
+                    if ui.button("Close Tab").clicked() { self.close_active_tab(); ui.close(); }
                 });
             });
         });
 
-        egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
+        // --- Tab bar ---------------------------------------------------------
+        egui::Panel::top("tab_bar").show_inside(ctx, |ui| {
             ui.horizontal(|ui| {
                 let mut close_idx = None;
                 for (i, tab) in self.open_files.iter().enumerate() {
@@ -262,11 +265,23 @@ impl eframe::App for NovaCibesEditor {
                     self.open_files.push(EditorTab::new_empty());
                     self.active_tab = self.open_files.len() - 1;
                 }
-                if let Some(i) = close_idx { self.close_active_tab(); }
+                if let Some(i) = close_idx {
+                    // The user clicked the close button on tab i
+                    if self.open_files.len() <= 1 {
+                        self.open_files = vec![EditorTab::new_empty()];
+                        self.active_tab = 0;
+                    } else {
+                        self.open_files.remove(i);
+                        if self.active_tab >= self.open_files.len() {
+                            self.active_tab = self.active_tab.saturating_sub(1);
+                        }
+                    }
+                }
             });
         });
 
-        egui::SidePanel::right("output_panel").resizable(true).default_width(300.0).show(ctx, |ui| {
+        // --- Output panel (right side) --------------------------------------
+        egui::Panel::right("output_panel").resizable(true).default_width(300.0).show_inside(ctx, |ui| {
             ui.heading("Output");
             ui.separator();
             egui::ScrollArea::vertical().auto_shrink([false;2]).show(ui, |ui| {
@@ -278,7 +293,8 @@ impl eframe::App for NovaCibesEditor {
             if ui.button("Clear Output").clicked() { self.output_text.clear(); }
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        // --- Central editor area --------------------------------------------
+        egui::CentralPanel::default().show_inside(ctx, |ui| {
             if self.active_tab < self.open_files.len() {
                 let tab = &mut self.open_files[self.active_tab];
                 let mut editor = egui_code_editor::CodeEditor::default()
@@ -297,7 +313,8 @@ impl eframe::App for NovaCibesEditor {
             }
         });
 
-        egui::TopBottomPanel::bottom("bottom_bar").show(ctx, |ui| {
+        // --- Bottom bar (Run button + status) -------------------------------
+        egui::Panel::bottom("bottom_bar").show_inside(ctx, |ui| {
             ui.horizontal(|ui| {
                 let can_run = !self.running && self.api_token.is_some();
                 if ui.add_enabled(can_run, egui::Button::new("▶ Run")).clicked() {
@@ -309,6 +326,7 @@ impl eframe::App for NovaCibesEditor {
             });
         });
 
+        // --- Poll the background channel -----------------------------------
         if let Some(rx) = &mut self.rx {
             if let Ok(result) = rx.try_recv() {
                 self.output_text = result;
