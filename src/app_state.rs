@@ -360,20 +360,23 @@ impl App for AppState {
             });
 
         // --- Central editor area ---
+        // --- Central editor area ---
+        // Using show_inside instead of show to avoid deprecation warning
+        // and ensure correct nesting within the App trait's update method.
         egui::CentralPanel::default().show_inside(ctx, |ui| {
             if self.active_tab < self.open_files.len() {
                 let tab = &mut self.open_files[self.active_tab];
-                // Use SONOKAI theme and id_source method for egui_code_editor v0.2.12
+                // Use the original compatible APIs for egui_code_editor v0.2.12
                 let mut editor = egui_code_editor::CodeEditor::default()
                     .with_syntax(egui_code_editor::Syntax::python())
-                    .with_theme(egui_code_editor::ColorTheme::SONOKAI) // Changed from MONOKAI
+                    .with_theme(egui_code_editor::ColorTheme::MONOKAI) // Original theme
                     .with_rows(25)
-                    .with_fontsize(14.0);
-                    // Use id_source instead of with_id_source
-                editor.id_source(format!("tab_{}", self.active_tab)); 
+                    .with_fontsize(14.0)
+                    .with_id_source(format!("tab_{}", self.active_tab)); // Original method
+                // Call show on the editor instance
                 editor.show(ui, &mut tab.code);
-            }
-        });
+            } // Closes the 'if' block for checking active tab index
+        }); // Closes the 'show_inside' block for CentralPanel
 
         // --- Bottom bar (Run button + status) ---
         // Using TopBottomPanel::bottom to avoid deprecation warning
