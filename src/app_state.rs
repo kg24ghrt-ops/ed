@@ -1,8 +1,8 @@
-use crate::token_manager::TokenManager;
+use crate::token_manager::TokenManager; // Import the TokenManager module
 use eframe::{egui, App, Frame};
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+use tokio::sync::mpsc; // Import mpsc for channels
 
 #[derive(Serialize)]
 struct RunRequest {
@@ -130,6 +130,8 @@ impl AppState {
         self.rx = Some(rx);
 
         // Spawn the async task using the runtime initialized by #[tokio::main]
+        // IMPORTANT: The closing brace for the async block MUST be on its own line
+        // aligned with the 'tokio::task::spawn' call to balance correctly.
         tokio::task::spawn(async move {
             let client = reqwest::Client::new();
             let mut results = Vec::new();
@@ -143,9 +145,9 @@ impl AppState {
                 let resp = client
                     .post(format!("{}/run", API_BASE))
                     .header("Authorization", format!("Bearer {}", token))
-                    .header("Content-Type", "application/json")
-                    .json(&req)
-                    .send()                    .await;
+                    .header("Content-Type", "application/json")                    .json(&req)
+                    .send()
+                    .await;
 
                 // Process the response
                 let block = match resp {
@@ -184,17 +186,17 @@ impl AppState {
 
             // Send the final combined results back to the main UI thread
             let _ = tx.send(results.join("\n\n")); // Join with double newline for readability
-        });
-    }
+        }); // This closing brace ends the 'async move { ... }' block AND the 'tokio::task::spawn(...)' call
+    } // This closing brace ends the 'pub fn run_code(&mut self)' function definition
 
     pub fn save_active(&mut self) {
         if self.active_tab >= self.open_files.len() {
             return;
         }
         let tab = &mut self.open_files[self.active_tab];
-        if let Some(path) = &tab.path {
-            if std::fs::write(path, &tab.code).is_ok() {
-                tab.modified = false;                self.status_message = format!("Saved {}", tab.title());
+        if let Some(path) = &tab.path {            if std::fs::write(path, &tab.code).is_ok() {
+                tab.modified = false;
+                self.status_message = format!("Saved {}", tab.title());
             } else {
                 self.status_message = "Error saving".into();
             }
@@ -241,9 +243,9 @@ impl App for AppState {
         ctx.set_visuals(egui::Visuals::dark());
 
         // --- API token prompt ---
-        if self.token_prompt_open {
-            egui::Window::new("Enter Hugging Face API Token")
-                .collapsible(false)                .resizable(false)
+        if self.token_prompt_open {            egui::Window::new("Enter Hugging Face API Token")
+                .collapsible(false)
+                .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
                     ui.label("Paste your personal access token:");
@@ -290,9 +292,9 @@ impl App for AppState {
                     if ui.button("Save").clicked() {
                         self.save_active();
                         ui.close();
-                    }
-                    if ui.button("Save As…").clicked() {
-                        self.save_active_as();                        ui.close();
+                    }                    if ui.button("Save As…").clicked() {
+                        self.save_active_as();
+                        ui.close();
                     }
                     if ui.button("Close Tab").clicked() {
                         self.close_active_tab();
@@ -338,10 +340,11 @@ impl App for AppState {
         });
 
         // --- Output panel (right side) ---
-        // Using show_inside to avoid deprecation warning
-        egui::TopBottomPanel::right("output_panel")
+        // Using the original 'show' method, which is still valid for Top/Bottom panels in this context
+        // or CentralPanel if not specifically needing show_inside for child content layout reasons.        egui::Panel::right("output_panel")
             .resizable(true)
-            .default_height(300.0)            .show(ctx, |ui| {
+            .default_size([300.0, 0.0])
+            .show(ctx, |ui| {
                 ui.heading("Output");
                 ui.separator();
                 egui::ScrollArea::vertical()
@@ -360,10 +363,8 @@ impl App for AppState {
             });
 
         // --- Central editor area ---
-        // --- Central editor area ---
-        // Using show_inside instead of show to avoid deprecation warning
-        // and ensure correct nesting within the App trait's update method.
-        egui::CentralPanel::default().show_inside(ctx, |ui| {
+        // Using the original 'show' method for CentralPanel, maintaining compatibility
+        egui::CentralPanel::default().show(ctx, |ui| {
             if self.active_tab < self.open_files.len() {
                 let tab = &mut self.open_files[self.active_tab];
                 // Use the original compatible APIs for egui_code_editor v0.2.12
@@ -376,11 +377,11 @@ impl App for AppState {
                 // Call show on the editor instance
                 editor.show(ui, &mut tab.code);
             } // Closes the 'if' block for checking active tab index
-        }); // Closes the 'show_inside' block for CentralPanel
+        }); // Closes the 'show' block for CentralPanel
 
         // --- Bottom bar (Run button + status) ---
-        // Using TopBottomPanel::bottom to avoid deprecation warning
-        egui::TopBottomPanel::bottom("bottom_bar").show(ctx, |ui| {
+        // Using the original 'show' method for Panel::bottom
+        egui::Panel::bottom("bottom_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let can_run = !self.running && self.api_token.is_some();
                 if ui.add_enabled(can_run, egui::Button::new("▶ Run")).clicked() {
@@ -389,10 +390,10 @@ impl App for AppState {
                 ui.checkbox(&mut self.run_all_tabs, "Run all open files");
                 if self.running {
                     ui.add(egui::Spinner::new());
-                }
-                ui.label(&self.status_message);
+                }                ui.label(&self.status_message);
             });
         });
+
         // --- Poll the background channel for results ---
         if let Some(rx) = &mut self.rx {
             if let Ok(result) = rx.try_recv() {
