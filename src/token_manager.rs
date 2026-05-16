@@ -45,6 +45,7 @@ impl TokenManager {
         }
     }
 
+    // Note: delete_credential exists in keyring 2.x
     pub fn remove_token() {
          if let Some(entry) = Self::keyring_entry() {
              if let Err(e) = entry.delete_credential() {

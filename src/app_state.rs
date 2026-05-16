@@ -1,5 +1,4 @@
 use crate::token_manager::TokenManager;
-use egui_code_editor::CodeEditor;
 use eframe::{egui, App, Frame};
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
@@ -47,8 +46,8 @@ impl EditorTab {
         }
     }
 }
-pub struct AppState {
-    pub open_files: Vec<EditorTab>,
+
+pub struct AppState {    pub open_files: Vec<EditorTab>,
     pub active_tab: usize,
     pub output_text: String,
     pub status_message: String,
@@ -96,8 +95,8 @@ impl AppState {
         // Check for token presence
         if self.api_token.is_none() {
             self.output_text = "Error: No API token found. Please enter it in the prompt.\n".into();
-            self.status_message = "No token!".into(); // Update status            return; // Stop execution
-        }
+            self.status_message = "No token!".into(); // Update status
+            return; // Stop execution        }
 
         // Prevent multiple simultaneous runs
         if self.running {
@@ -145,8 +144,8 @@ impl AppState {
                     .post(format!("{}/run", API_BASE))
                     .header("Authorization", format!("Bearer {}", token))
                     .header("Content-Type", "application/json")
-                    .json(&req)                    .send()
-                    .await;
+                    .json(&req)
+                    .send()                    .await;
 
                 // Process the response
                 let block = match resp {
@@ -194,8 +193,8 @@ impl AppState {
         }
         let tab = &mut self.open_files[self.active_tab];
         if let Some(path) = &tab.path {
-            if std::fs::write(path, &tab.code).is_ok() {                tab.modified = false;
-                self.status_message = format!("Saved {}", tab.title());
+            if std::fs::write(path, &tab.code).is_ok() {
+                tab.modified = false;                self.status_message = format!("Saved {}", tab.title());
             } else {
                 self.status_message = "Error saving".into();
             }
@@ -243,8 +242,8 @@ impl App for AppState {
 
         // --- API token prompt ---
         if self.token_prompt_open {
-            egui::Window::new("Enter Hugging Face API Token")                .collapsible(false)
-                .resizable(false)
+            egui::Window::new("Enter Hugging Face API Token")
+                .collapsible(false)                .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
                     ui.label("Paste your personal access token:");
@@ -292,8 +291,8 @@ impl App for AppState {
                         self.save_active();
                         ui.close();
                     }
-                    if ui.button("Save As…").clicked() {                        self.save_active_as();
-                        ui.close();
+                    if ui.button("Save As…").clicked() {
+                        self.save_active_as();                        ui.close();
                     }
                     if ui.button("Close Tab").clicked() {
                         self.close_active_tab();
@@ -339,9 +338,10 @@ impl App for AppState {
         });
 
         // --- Output panel (right side) ---
-        egui::Panel::right("output_panel")
+        // Using show_inside to avoid deprecation warning
+        egui::TopBottomPanel::right("output_panel")
             .resizable(true)
-            .default_size([300.0, 0.0])            .show(ctx, |ui| {
+            .default_height(300.0)            .show(ctx, |ui| {
                 ui.heading("Output");
                 ui.separator();
                 egui::ScrollArea::vertical()
@@ -360,21 +360,24 @@ impl App for AppState {
             });
 
         // --- Central editor area ---
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ctx, |ui| {
             if self.active_tab < self.open_files.len() {
                 let tab = &mut self.open_files[self.active_tab];
-                let mut editor = CodeEditor::default()
+                // Use SONOKAI theme and id_source method for egui_code_editor v0.2.12
+                let mut editor = egui_code_editor::CodeEditor::default()
                     .with_syntax(egui_code_editor::Syntax::python())
-                    .with_theme(egui_code_editor::ColorTheme::MONOKAI)
+                    .with_theme(egui_code_editor::ColorTheme::SONOKAI) // Changed from MONOKAI
                     .with_rows(25)
-                    .with_fontsize(14.0)
-                    .with_id_source(format!("tab_{}", self.active_tab));
+                    .with_fontsize(14.0);
+                    // Use id_source instead of with_id_source
+                editor.id_source(format!("tab_{}", self.active_tab)); 
                 editor.show(ui, &mut tab.code);
             }
         });
 
         // --- Bottom bar (Run button + status) ---
-        egui::Panel::bottom("bottom_bar").show(ctx, |ui| {
+        // Using TopBottomPanel::bottom to avoid deprecation warning
+        egui::TopBottomPanel::bottom("bottom_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let can_run = !self.running && self.api_token.is_some();
                 if ui.add_enabled(can_run, egui::Button::new("▶ Run")).clicked() {
@@ -387,10 +390,10 @@ impl App for AppState {
                 ui.label(&self.status_message);
             });
         });
-
         // --- Poll the background channel for results ---
         if let Some(rx) = &mut self.rx {
-            if let Ok(result) = rx.try_recv() {                self.output_text = result;
+            if let Ok(result) = rx.try_recv() {
+                self.output_text = result;
                 self.running = false;
                 self.status_message = "Idle".into();
                 self.rx = None; // Clear the receiver handle

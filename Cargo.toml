@@ -7,10 +7,10 @@ description = "A native macOS code editor that runs Python via a remote API."
 [dependencies]
 eframe = "0.34.2"
 egui = "0.34.2"
-egui_code_editor = "0.2.12"
+egui_code_editor = "0.2.12" # Original version
 syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }
 reqwest = { version = "0.13.3", features = ["json"] }
-tokio = { version = "1.52.3", features = ["full"] } # Using full for convenience, could be optimized later
+tokio = { version = "1.52.3", features = ["full"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 rfd = "0.17.2"
