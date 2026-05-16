@@ -1,14 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
 use std::path::PathBuf;
 use directories::ProjectDirs;
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
+use keyring::Entry; // Import keyring
 
-static RT: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
-    tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime")
-});
+// Define constants for keyring service and user
+const TOKEN_SERVICE: &str = "NovaCibesEditor";
+const TOKEN_USER: &str = "HFApiToken";
 
 #[derive(Serialize)]
 struct RunRequest {
@@ -31,14 +30,24 @@ struct EditorTab {
 
 impl EditorTab {
     fn new_empty() -> Self {
-        Self { path: None, code: String::new(), modified: false }
+        Self {
+            path: None,
+            code: String::new(),
+            modified: false,
+        }
     }
+
     fn title(&self) -> String {
-        let name = self.path.as_ref()
+        let name = self
+            .path
+            .as_ref()
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-            .unwrap_or_else(|| "Untitled".into());
-        if self.modified { format!("{} *", name) } else { name }
-    }
+            .unwrap_or_else(|| "Untitled".to_owned());
+        if self.modified {
+            format!("{} *", name)
+        } else {
+            name
+        }    }
 }
 
 struct NovaCibesEditor {
@@ -47,67 +56,129 @@ struct NovaCibesEditor {
     output_text: String,
     status_message: String,
     running: bool,
-    api_token: Option<String>,
+    api_token: Option<String>, // Store token in memory after loading from keyring
     token_prompt_open: bool,
-    temp_token: String,
+    temp_token: String, // Used only for the input field in the UI
     run_all_tabs: bool,
     rx: Option<mpsc::UnboundedReceiver<String>>,
 }
 
 impl NovaCibesEditor {
     fn new() -> Self {
-        let (token, prompt) = Self::load_token();
+        // Attempt to load the token from the secure keyring
+        let token = Self::load_token_from_keyring();
+        // Determine if the prompt should be shown based on whether the token was successfully loaded
+        let prompt_open = token.is_none();
+
         Self {
             open_files: vec![EditorTab::new_empty()],
             active_tab: 0,
             output_text: String::new(),
             status_message: "Idle".into(),
             running: false,
-            api_token: token,
-            token_prompt_open: prompt,
+            api_token: token, // Store the loaded token
+            token_prompt_open: prompt_open,
             temp_token: String::new(),
             run_all_tabs: false,
             rx: None,
         }
     }
 
-    fn token_path() -> Option<PathBuf> {
-        ProjectDirs::from("com", "novacibes", "editor")
-            .map(|d| d.config_dir().join("token.txt"))
+    // Helper function to get the keyring entry object
+    fn token_keyring_entry() -> Option<Entry> {
+        Entry::new(TOKEN_SERVICE, TOKEN_USER).ok()
     }
 
-    fn load_token() -> (Option<String>, bool) {
-        if let Some(path) = Self::token_path() {
-            if let Ok(t) = std::fs::read_to_string(&path) {
-                let t = t.trim().to_string();
-                if !t.is_empty() { return (Some(t), false); }
+    // Load the token from the OS keyring
+    fn load_token_from_keyring() -> Option<String> {
+        if let Some(entry) = Self::token_keyring_entry() {
+            match entry.get_password() {
+                Ok(token) => {
+                    if !token.is_empty() {
+                        println!("Token loaded from keyring successfully."); // Optional: Log for debugging
+                        Some(token)                    } else {
+                        println!("Token found in keyring but was empty.");
+                        None
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error reading token from keyring: {:?}", e);
+                    // Could also show a status message or prompt again
+                    None
+                }
             }
-        }
-        (None, true)
-    }
-
-    fn save_token(token: &str) {
-        if let Some(path) = Self::token_path() {
-            let _ = std::fs::create_dir_all(path.parent().unwrap());
-            let _ = std::fs::write(&path, token);
+        } else {
+            eprintln!("Failed to initialize keyring entry for loading.");
+            None
         }
     }
 
-    fn run_code(&mut self, ctx: &egui::Context) {
+    // Save the token to the OS keyring
+    fn save_token_to_keyring(token: &str) {
+        if let Some(entry) = Self::token_keyring_entry() {
+            if let Err(e) = entry.set_password(token) {
+                eprintln!("Error saving token to keyring: {:?}", e);
+                // Inform the user that saving failed via status message or dialog
+            } else {
+                 println!("Token saved to keyring successfully."); // Optional: Log for debugging
+            }
+        } else {
+            eprintln!("Failed to initialize keyring entry for saving.");
+        }
+    }
+
+    // Called when the user clicks 'OK' in the token prompt
+    fn confirm_token_input(&mut self) {
+        if !self.temp_token.trim().is_empty() {
+            let token_to_save = self.temp_token.trim().to_string();
+            self.api_token = Some(token_to_save.clone()); // Update state
+            Self::save_token_to_keyring(&token_to_save); // Save securely to keyring
+            self.temp_token.clear(); // Clear the input field
+            self.token_prompt_open = false; // Close the prompt
+        }
+    }
+
+    // Optional: Function to remove token from keyring (e.g., for logout)
+    fn remove_token_from_keyring() {
+         if let Some(entry) = Self::token_keyring_entry() {
+             if let Err(e) = entry.delete_credential() {
+                 eprintln!("Error deleting token from keyring: {:?}", e);
+                 // Inform user if deletion failed
+             } else {
+                  println!("Token removed from keyring successfully."); // Optional: Log             }
+         } else {
+             eprintln!("Failed to initialize keyring entry for removal.");
+         }
+    }
+
+    fn run_code(&mut self) {
+        // Check for token presence
         if self.api_token.is_none() {
-            self.output_text = "Error: No API token. Enter it in the prompt.\n".into();
+            self.output_text = "Error: No API token found. Please enter it in the prompt.\n".into();
+            self.status_message = "No token!".into(); // Update status
+            return; // Stop execution
+        }
+
+        // Prevent multiple simultaneous runs
+        if self.running {
             return;
         }
-        if self.running { return; }
 
-        let token = self.api_token.clone().unwrap();
+        // Get the token for the spawned task
+        let token = self.api_token.clone().unwrap(); // Safe due to check above
+
+        // Determine jobs based on run_all_tabs flag
         let jobs: Vec<(String, String)> = if self.run_all_tabs {
-            self.open_files.iter().map(|t| (t.title(), t.code.clone())).collect()
+            self.open_files
+                .iter()
+                .map(|t| (t.title(), t.code.clone()))
+                .collect()
         } else {
             let t = &self.open_files[self.active_tab];
             vec![(t.title(), t.code.clone())]
         };
 
+        // Set UI state to running
         self.running = true;
         self.status_message = if jobs.len() == 1 {
             format!("Running {}...", jobs[0].0)
@@ -115,49 +186,71 @@ impl NovaCibesEditor {
             format!("Running {} files...", jobs.len())
         };
 
+        // Set up channel for result communication
         let (tx, rx) = mpsc::unbounded_channel();
         self.rx = Some(rx);
 
-        let ctx_clone = ctx.clone();
-        RT.spawn(async move {
+        // Spawn the async task using the runtime initialized by #[tokio::main]
+        tokio::task::spawn(async move {
             let client = reqwest::Client::new();
             let mut results = Vec::new();
             for (title, code) in &jobs {
-                let req = RunRequest { code: code.clone() };
-                let resp = client.post(format!("{}/run", API_BASE))
+                let req = RunRequest {
+                    code: code.clone(), // Clone code for the request payload
+                };
+
+                // Perform the HTTP request
+                let resp = client
+                    .post(format!("{}/run", API_BASE))
                     .header("Authorization", format!("Bearer {}", token))
                     .header("Content-Type", "application/json")
                     .json(&req)
                     .send()
                     .await;
 
+                // Process the response
                 let block = match resp {
                     Ok(r) => {
                         let status = r.status();
                         let body = r.text().await.unwrap_or_default();
+
                         if status.is_success() {
+                            // Try to deserialize the successful response
                             if let Ok(parsed) = serde_json::from_str::<RunResponse>(&body) {
                                 let out = parsed.stdout.unwrap_or_default();
                                 let err = parsed.stderr.unwrap_or_default();
-                                format!("{}{}", out, err)
-                            } else { body }
+                                format!("{}{}", out, err) // Combine stdout and stderr
+                            } else {
+                                // If deserialization fails, return the raw body
+                                body
+                            }
                         } else {
+                            // Handle non-successful HTTP status codes
                             format!("HTTP {}: {}", status.as_u16(), body)
                         }
-                    },
-                    Err(e) => format!("Request failed: {}", e),
+                    }
+                    Err(e) => {
+                        // Handle request errors (network, timeout, etc.)
+                        format!("Request failed: {}", e)
+                    }
                 };
+
+                // Format the result block
                 if jobs.len() > 1 {
                     results.push(format!("===== {} =====\n{}", title, block));
-                } else { results.push(block); }
+                } else {
+                    results.push(block);
+                }
             }
-            let _ = tx.send(results.join("\n"));
-            ctx_clone.request_repaint();
+
+            // Send the final combined results back to the main UI thread            let _ = tx.send(results.join("\n\n")); // Join with double newline for readability
         });
     }
 
     fn save_active(&mut self) {
-        if self.active_tab >= self.open_files.len() { return; }
+        if self.active_tab >= self.open_files.len() {
+            return;
+        }
         let tab = &mut self.open_files[self.active_tab];
         if let Some(path) = &tab.path {
             if std::fs::write(path, &tab.code).is_ok() {
@@ -167,13 +260,15 @@ impl NovaCibesEditor {
                 self.status_message = "Error saving".into();
             }
         } else {
-            drop(tab);
+            drop(tab); // Explicitly drop the mutable borrow before calling save_as
             self.save_active_as();
         }
     }
 
     fn save_active_as(&mut self) {
-        if self.active_tab >= self.open_files.len() { return; }
+        if self.active_tab >= self.open_files.len() {
+            return;
+        }
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("Python", &["py"])
             .save_file()
@@ -197,71 +292,93 @@ impl NovaCibesEditor {
         }
         self.open_files.remove(self.active_tab);
         if self.active_tab >= self.open_files.len() {
-            self.active_tab = self.active_tab.saturating_sub(1);
-        }
+            self.active_tab = self.active_tab.saturating_sub(1);        }
     }
 }
 
 impl eframe::App for NovaCibesEditor {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        ui.ctx().set_visuals(egui::Visuals::dark());
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.set_visuals(egui::Visuals::dark());
 
         // --- API token prompt ---
         if self.token_prompt_open {
             egui::Window::new("Enter Hugging Face API Token")
-                .collapsible(false).resizable(false)
+                .collapsible(false)
+                .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ui.ctx(), |ui| {
+                .show(ctx, |ui| {
                     ui.label("Paste your personal access token:");
                     ui.text_edit_singleline(&mut self.temp_token);
                     if ui.button("OK").clicked() && !self.temp_token.trim().is_empty() {
-                        self.api_token = Some(self.temp_token.trim().to_string());
-                        Self::save_token(self.temp_token.trim());
-                        self.temp_token.clear();
-                        self.token_prompt_open = false;
+                        self.confirm_token_input(); // Use the new dedicated function
                     }
                 });
         }
 
         // --- Menu bar ---
-        egui::Panel::top("menu_bar").show_inside(ui, |ui| {
-            egui::MenuBar::new().ui(ui, |ui| {
+        egui::Panel::top("menu_bar").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("New Tab").clicked() {
                         self.open_files.push(EditorTab::new_empty());
                         self.active_tab = self.open_files.len() - 1;
                         ui.close();
                     }
-                    if ui.button("Open\u2026").clicked() {
-                        if let Some(path) = rfd::FileDialog::new().add_filter("Python", &["py"]).pick_file() {
+                    if ui.button("Open…").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Python", &["py"])
+                            .pick_file()
+                        {
                             if let Ok(code) = std::fs::read_to_string(&path) {
                                 let cur = &self.open_files[self.active_tab];
                                 if !cur.modified && cur.code.is_empty() && cur.path.is_none() {
                                     let tab = &mut self.open_files[self.active_tab];
-                                    tab.code = code; tab.path = Some(path); tab.modified = false;
+                                    tab.code = code;
+                                    tab.path = Some(path);
+                                    tab.modified = false;
                                 } else {
-                                    self.open_files.push(EditorTab { path: Some(path), code, modified: false });
-                                    self.active_tab = self.open_files.len() - 1;
+                                    self.open_files.push(EditorTab {
+                                        path: Some(path),
+                                        code,
+                                        modified: false,
+                                    });                                    self.active_tab = self.open_files.len() - 1;
                                 }
                             }
                         }
                         ui.close();
                     }
-                    if ui.button("Save").clicked() { self.save_active(); ui.close(); }
-                    if ui.button("Save As\u2026").clicked() { self.save_active_as(); ui.close(); }
-                    if ui.button("Close Tab").clicked() { self.close_active_tab(); ui.close(); }
+                    if ui.button("Save").clicked() {
+                        self.save_active();
+                        ui.close();
+                    }
+                    if ui.button("Save As…").clicked() {
+                        self.save_active_as();
+                        ui.close();
+                    }
+                    if ui.button("Close Tab").clicked() {
+                        self.close_active_tab();
+                        ui.close();
+                    }
                 });
             });
         });
 
         // --- Tab bar ---
-        egui::Panel::top("tab_bar").show_inside(ui, |ui| {
+        egui::Panel::top("tab_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let mut close_idx = None;
                 for (i, tab) in self.open_files.iter().enumerate() {
-                    let fill = if i == self.active_tab { egui::Color32::from_rgb(60,60,60) } else { egui::Color32::from_rgb(40,40,40) };
-                    if ui.add(egui::Button::new(tab.title()).fill(fill)).clicked() { self.active_tab = i; }
-                    if ui.small_button("x").clicked() { close_idx = Some(i); }
+                    let fill = if i == self.active_tab {
+                        egui::Color32::from_rgb(60, 60, 60)
+                    } else {
+                        egui::Color32::from_rgb(40, 40, 40)
+                    };
+                    if ui.add(egui::Button::new(tab.title()).fill(fill)).clicked() {
+                        self.active_tab = i;
+                    }
+                    if ui.small_button("x").clicked() {
+                        close_idx = Some(i);
+                    }
                 }
                 if ui.small_button("+").clicked() {
                     self.open_files.push(EditorTab::new_empty());
@@ -273,8 +390,7 @@ impl eframe::App for NovaCibesEditor {
                         self.active_tab = 0;
                     } else {
                         self.open_files.remove(i);
-                        if self.active_tab >= self.open_files.len() {
-                            self.active_tab = self.active_tab.saturating_sub(1);
+                        if self.active_tab >= self.open_files.len() {                            self.active_tab = self.active_tab.saturating_sub(1);
                         }
                     }
                 }
@@ -282,20 +398,29 @@ impl eframe::App for NovaCibesEditor {
         });
 
         // --- Output panel (right side) ---
-        egui::Panel::right("output_panel").resizable(true).default_size(300.0).show_inside(ui, |ui| {
-            ui.heading("Output");
-            ui.separator();
-            egui::ScrollArea::vertical().auto_shrink([false;2]).show(ui, |ui| {
-                ui.add(egui::TextEdit::multiline(&mut self.output_text.as_str())
-                    .font(egui::FontId::monospace(13.0))
-                    .interactive(false)
-                    .desired_width(f32::INFINITY));
+        egui::Panel::right("output_panel")
+            .resizable(true)
+            .default_size([300.0, 0.0])
+            .show(ctx, |ui| {
+                ui.heading("Output");
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.output_text.as_str())
+                                .font(egui::FontId::monospace(13.0))
+                                .interactive(false)
+                                .desired_width(f32::INFINITY),
+                        );
+                    });
+                if ui.button("Clear Output").clicked() {
+                    self.output_text.clear();
+                }
             });
-            if ui.button("Clear Output").clicked() { self.output_text.clear(); }
-        });
 
         // --- Central editor area ---
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ctx, |ui| {
             if self.active_tab < self.open_files.len() {
                 let tab = &mut self.open_files[self.active_tab];
                 let mut editor = egui_code_editor::CodeEditor::default()
@@ -309,39 +434,50 @@ impl eframe::App for NovaCibesEditor {
         });
 
         // --- Bottom bar (Run button + status) ---
-        egui::Panel::bottom("bottom_bar").show_inside(ui, |ui| {
+        egui::Panel::bottom("bottom_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let can_run = !self.running && self.api_token.is_some();
-                let ctx = ui.ctx().clone();
-                if ui.add_enabled(can_run, egui::Button::new("\u25b6 Run")).clicked() {
-                    self.run_code(&ctx);
+                if ui.add_enabled(can_run, egui::Button::new("▶ Run")).clicked() {
+                    self.run_code();
+                }                ui.checkbox(&mut self.run_all_tabs, "Run all open files");
+                if self.running {
+                    ui.add(egui::Spinner::new());
                 }
-                ui.checkbox(&mut self.run_all_tabs, "Run all open files");
-                if self.running { ui.add(egui::Spinner::new()); }
                 ui.label(&self.status_message);
             });
         });
 
-        // --- Poll the background channel ---
+        // --- Poll the background channel for results ---
         if let Some(rx) = &mut self.rx {
             if let Ok(result) = rx.try_recv() {
                 self.output_text = result;
                 self.running = false;
                 self.status_message = "Idle".into();
-                self.rx = None;
+                self.rx = None; // Clear the receiver handle
             }
         }
-        if self.running { ui.ctx().request_repaint(); }
+
+        // Request repaint while running to keep the spinner animating
+        if self.running {
+            ctx.request_repaint();
+        }
     }
 }
 
-fn main() {
-    let _ = &*RT;
+// Use #[tokio::main] to manage the async runtime
+#[tokio::main]
+async fn main() {
     let opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([900.0, 600.0])
             .with_min_inner_size([800.0, 500.0]),
         ..Default::default()
     };
-    eframe::run_native("NovaCibes Editor", opts, Box::new(|_cc| Ok(Box::new(NovaCibesEditor::new())))).unwrap();
+
+    eframe::run_native(
+        "NovaCibes Editor",
+        opts,
+        Box::new(|_cc| Ok(Box::new(NovaCibesEditor::new()))),
+    )
+    .unwrap();
 }
